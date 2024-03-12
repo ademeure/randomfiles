@@ -196,6 +196,8 @@
       },
       transcriber :{
         "provider": "talkscriber",
+        "mode": "transcribe",
+        "model": "whisper",
         "language": "en",
       },
       firstMessage: (lastFinalisedTranscript.trim().length > 10) ? messageRestart : messageNew,
@@ -209,12 +211,12 @@
 
     vapiInstance.on('speech-start', () => {
       console.log('Speech has started');
-      vapiInstance.setMuted(true);
+      //vapiInstance.setMuted(true);
     });
 
     vapiInstance.on('speech-end', () => {
       console.log('Speech has ended');
-      vapiInstance.setMuted(false);
+      //vapiInstance.setMuted(false);
     });
 
     vapiInstance.on('call-start', () => {
