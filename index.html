@@ -1,0 +1,316 @@
+<br/><br/><br/><br/><br/>
+<script>
+  // Try getting apikey from local storage
+  // If it is not there, then open a popup to ask the user to enter their apikey
+  var apiKey = getLocalStorage('vapikey')
+  if (!apiKey) {
+    apiKey = prompt("Please enter your VAPI API key");
+    if (apiKey) {
+      setLocalStorage('vapikey', apiKey);
+    }
+  }
+
+  const buttonConfig = {
+    position: "top", // "bottom" | "top" | "left" | "right" | "top-right" | "top-left" | "bottom-left" | "bottom-right"
+    offset: "40px", // decide how far the button should be from the edge
+    width: "50px", // min-width of the button
+    height: "50px", // height of the button
+    idle: { // button state when the call is not active.
+      color: `rgb(93, 254, 202)`, 
+      type: "round", // or "round"
+      title: "Talk to me!", // only required in case of Pill
+      subtitle: "Talk with our AI assistant", // only required in case of pill
+      icon: `https://unpkg.com/lucide-static@0.321.0/icons/phone.svg`,
+    },
+    loading: { // button state when the call is connecting
+      color: `rgb(93, 124, 202)`,
+      type: "round", // or "round"
+      title: "Connecting...", // only required in case of Pill
+      subtitle: "Please wait", // only required in case of pill
+      icon: `https://unpkg.com/lucide-static@0.321.0/icons/loader-2.svg`,
+    },
+    active: { // button state when the call is in progress or active.
+      color: `rgb(255, 0, 0)`,
+      type: "round", // or "round"
+      title: "Call is in progress...", // only required in case of Pill
+      subtitle: "End the call.", // only required in case of pill
+      icon: `https://unpkg.com/lucide-static@0.321.0/icons/phone-off.svg`,
+    },
+  };
+
+  var vapiInstance = null;
+  var isCallActive = false;
+  var lastFinalisedTranscript = "";
+  var lastFinalUpdate = "";
+  var lastPartialUpdate = "";
+  var lastRole = "";
+
+  // Function to set a value in Local Storage
+  function setLocalStorage(name, value) {
+    localStorage.setItem(name, value);
+  }
+
+  // Function to get a value from Local Storage
+  function getLocalStorage(name) {
+    return localStorage.getItem(name);
+  }
+
+  function updateTranscriptDisplay(message) {
+    if(message.role === 'user') {
+      message.role = "User";
+      lastRole = "User";
+    }
+    if(message.role === 'assistant') {
+      message.role = "AI";
+      lastRole = "AI";
+    }
+
+    // Check if the start of the new update is exactly the same as the last final update (>15 characters).
+    // If so, remove the identical start from message.transcript
+    if(lastFinalUpdate.length > 15 && message.transcript.startsWith(lastFinalUpdate)) {
+      message.transcript = message.transcript.substring(lastFinalUpdate.length);
+    }
+
+    if(message.transcriptType === 'final') {
+      lastFinalisedTranscript += message.role + ': ' + message.transcript + ' <br/>\n ';
+      lastFinalUpdate = message.transcript;
+      lastPartialUpdate = message.transcript;
+      lastRole = "";
+    }
+    
+    var newTranscript = lastFinalisedTranscript;
+
+    if(message.transcriptType === 'partial') {
+      // Check if the new transcript is too different from lastPartialUpdate (due to bug in the API sending nonsense)
+      // If so, ignore the new partial update
+      // To determine similarity, we determine how many words are the same
+      var lastPartialWords = lastPartialUpdate.split(' ');
+      var newPartialWords = message.transcript.split(' ');
+
+      // Compare to messageNew and messageRestart
+      if (message.transcript.includes(messageNew) || message.transcript.includes(messageRestart)) {
+        console.log("Unexpected partial update containing messageNew or messageRestart, ignoring.")
+        console.log("New partial: " + message.transcript)
+        return;
+      }
+      if (message.role == "User" && lastRole == "AI") {
+        console.log("Unexpected user message while AI is talking.");
+        return;
+      }
+
+      /*if (lastPartialWords.length >= 4) {
+        var sameWords = 0;
+        for(var i = 0; i < lastPartialWords.length; i++) {
+          if(lastPartialWords[i] === newPartialWords[i]) {
+            sameWords++;
+          }
+        }
+        if(sameWords < lastPartialWords.length / 2) {
+          console.log("Unexpected extremely different partial update, ignoring.")
+          console.log("Last partial: " + lastPartialUpdate)
+          console.log("New partial: " + message.transcript)
+          return;
+        }
+      }*/
+
+      newTranscript += message.role + ': ' + message.transcript + ' <br/>\n ';
+      lastPartialUpdate = message.transcript;
+    }
+
+    var displayElement = document.getElementById('transcriptDisplay');
+    displayElement.innerHTML = newTranscript.trim();
+    setLocalStorage('transcriptHistory', newTranscript);
+  }
+
+  // Include debounce function to limit how often a function is executed
+  function debounce(func, wait, immediate) {
+    var timeout;
+    return function() {
+      var context = this, args = arguments;
+      var later = function() {
+        timeout = null;
+        if (!immediate) func.apply(context, args);
+      };
+      var callNow = immediate && !timeout;
+      clearTimeout(timeout);
+      timeout = setTimeout(later, wait);
+      if (callNow) func.apply(context, args);
+    };
+  };
+
+  // Function to update the cookie with the current transcript
+  function updateTranscriptCookie() {
+    var transcriptContent = document.getElementById('transcriptDisplay').innerHTML;
+    lastFinalisedTranscript = transcriptContent;
+    setLocalStorage('transcriptHistory', transcriptContent);
+  }
+
+  function getFormattedDate() {
+    // Get date and time formatted as "HH:MM on Monday the 10th of March 2024"
+    var date = new Date();
+    var days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    var months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+    var day = days[date.getDay()];
+    var month = months[date.getMonth()];
+    var dayOfMonth = date.getDate();
+    var year = date.getFullYear();
+
+    // Function to get the ordinal suffix for the day of the month
+    function getOrdinalSuffix(day) {
+      if (day > 3 && day < 21) return 'th';
+      switch (day % 10) {
+        case 1:  return "st";
+        case 2:  return "nd";
+        case 3:  return "rd";
+        default: return "th";
+      }
+    }
+
+    var hours = date.getHours().toString().padStart(2, '0');
+    var minutes = date.getMinutes().toString().padStart(2, '0');
+
+    var formattedDate = `${hours}:${minutes} on ${day} the ${dayOfMonth}${getOrdinalSuffix(dayOfMonth)} of ${month} ${year}`;
+    return formattedDate;
+  }
+
+  const messageRestart = "What's up?";
+  const messageNew = "Hello there! Please give me a summary of the current situation before we start."
+
+  function createVapiInstance() {
+    var datetime = getFormattedDate();
+    var button = document.getElementById('updateButton');
+    button.style.display = 'none';
+
+    var model = document.getElementById("optionsDropdown").value;
+    var assistant = {
+      model: {
+        provider: (model == "gpt4") ? "openai" : "groq",
+        model: (model == "gpt4") ? "gpt-4" : "mixtral-8x7b-32768",
+        
+        systemPrompt:
+          "You're a versatile AI assistant named Exodus who is fun to talk with. The time is " + datetime + ". Here is the conversation so far: " + lastFinalisedTranscript,
+      },
+      voice: {
+        provider: "openai",
+        voiceId: "nova",
+      },
+      transcriber :{
+        "provider": "talkscriber",
+        "language": "en",
+      },
+      firstMessage: (lastFinalisedTranscript.trim().length > 10) ? messageRestart : messageNew,
+    };
+
+    vapiInstance = window.vapiSDK.run({
+      apiKey: apiKey, // mandatory
+      assistant: assistant, // mandatory
+      config: buttonConfig, // optional
+    });
+
+    vapiInstance.on('speech-start', () => {
+      console.log('Speech has started');
+      vapiInstance.setMuted(true);
+    });
+
+    vapiInstance.on('speech-end', () => {
+      console.log('Speech has ended');
+      vapiInstance.setMuted(false);
+    });
+
+    vapiInstance.on('call-start', () => {
+      console.log('Call has started');
+
+      if (lastFinalisedTranscript.trim().length > 8) {
+        lastFinalisedTranscript += ' <br/>\n ';
+        var displayElement = document.getElementById('transcriptDisplay');
+        displayElement.innerHTML = lastFinalisedTranscript += ' <br/>\n ';
+        setLocalStorage('transcriptHistory', lastFinalisedTranscript);
+      }
+
+      document.getElementById('transcriptDisplay').contentEditable = 'false'; // Disable editing
+    });
+
+    vapiInstance.on('call-end', () => {
+      console.log('Call has stopped');
+      document.getElementById('transcriptDisplay').contentEditable = 'true'; // Enable editing
+      vapiInstance = null;
+      createVapiInstance();
+    });
+
+    // Enhance message event handler to update transcripts
+    vapiInstance.on('message', (message) => {
+      console.log(message);
+      if(message.type === "transcript") {
+        updateTranscriptDisplay(message);
+
+        // Scroll to the bottom after the update
+        var transcriptDisplay = document.getElementById('transcriptDisplay');
+        transcriptDisplay.scrollTop = transcriptDisplay.scrollHeight;
+      }
+    });
+
+    vapiInstance.on('error', (e) => {
+      console.error(e)
+    });
+  }
+
+  (function (d, t) {
+    // Dynamically create and append the transcript display below other content
+    window.onload = function() {
+    // Check if this is a mobile browser and set font size to 22 if it is and 16 otherwise
+      var isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+      var fontSize = isMobile ? '22px' : '16px';
+
+      var transcriptDisplay = document.createElement('div');
+      transcriptDisplay.id = 'transcriptDisplay';
+      transcriptDisplay.style.height = '600px';
+      transcriptDisplay.style.maxHeight = '600px';
+      transcriptDisplay.style.overflowY = 'auto';
+      transcriptDisplay.style.border = '1px solid #ccc';
+      transcriptDisplay.style.padding = '10px';
+      transcriptDisplay.style.fontSize = fontSize;
+      transcriptDisplay.style.marginTop = '20px'; // Ensure it's below the call button
+      transcriptDisplay.contentEditable = 'true'; // Start as editable
+      document.body.appendChild(transcriptDisplay);
+
+      // Load existing transcripts from cookie
+      var savedTranscripts = getLocalStorage('transcriptHistory');
+      if(savedTranscripts) {
+        lastFinalisedTranscript = savedTranscripts;
+        transcriptDisplay.innerHTML = savedTranscripts;
+      }
+
+      // Add an input event listener to update cookie when content is edited
+      transcriptDisplay.addEventListener('input', debounce(function() {
+        updateTranscriptCookie();
+        var button = document.getElementById('updateButton');
+        button.style.display = '';
+      }, 500)); // Debounce for 500 ms
+    };
+
+    var g = document.createElement(t),
+    s = d.getElementsByTagName(t)[0];
+    g.src = "https://cdn.jsdelivr.net/gh/VapiAI/html-script-tag@latest/dist/assets/index.js";
+    g.defer = true;
+    g.async = true;
+    s.parentNode.insertBefore(g, s);
+
+    g.onload = function () {
+      // Load existing transcripts from cookie
+      var savedTranscripts = getLocalStorage('transcriptHistory');
+      if(savedTranscripts) {
+        lastFinalisedTranscript = savedTranscripts;
+      }
+      createVapiInstance();
+    };
+
+  })(document, "script");
+
+</script>
+<center>
+  <button id="updateButton" onclick="createVapiInstance()" style="display: none;">Update With Edits</button>
+  <select id="optionsDropdown" onchange="createVapiInstance()">
+    <option value="gpt4">GPT4</option>
+    <option value="groq">Groq</option>
+  </select>
+</center>
